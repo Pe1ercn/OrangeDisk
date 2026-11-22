@@ -1,0 +1,4 @@
+dist/
+releases/*.exe
+*.log
+node.exe
