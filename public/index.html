@@ -44,6 +44,7 @@
       <button class="tab" data-tab="files">文件</button>
       <button class="tab" data-tab="big">大文件</button>
       <button class="tab" data-tab="apps">应用</button>
+      <button class="tab" data-tab="clean">清理</button>
     </nav>
 
     <div class="top-right">
@@ -103,7 +104,7 @@
       </div>
 
       <div class="file-head">
-        <span></span><span>名称</span><span>大小</span><span>占比</span><span>修改时间</span>
+        <span></span><span>名称</span><span></span><span>大小</span><span>占比</span><span>修改时间</span>
       </div>
       <div class="file-list" id="fileList"></div>
       <div class="empty" id="fileEmpty" hidden></div>
@@ -153,9 +154,42 @@
       <div class="app-list" id="appList"></div>
       <div class="empty" id="appEmpty" hidden></div>
     </section>
+
+    <!-- 清理 -->
+    <section class="view" id="view-clean">
+      <div class="view-head">
+        <div>
+          <h1>清理垃圾</h1>
+          <p id="cleanSummary">按分类扫描缓存，勾选后清理；只删白名单目录里的文件</p>
+        </div>
+        <div class="clean-tools">
+          <button class="chip" id="cleanRescan">重新扫描</button>
+          <button class="btn-primary" id="cleanRun" disabled>清理所选</button>
+        </div>
+      </div>
+
+      <div class="clean-total" id="cleanTotal" hidden>
+        <div class="ct-left"><span>已选可清理</span><b id="cleanTotalSize">0 B</b></div>
+        <div class="ct-right" id="cleanTotalHint">勾选下方分类后点「清理所选」</div>
+      </div>
+
+      <div class="clean-list" id="cleanList"></div>
+      <div class="empty" id="cleanEmpty" hidden></div>
+    </section>
   </main>
 
-  <footer class="app-foot">橙盘 OrangeDisk · 数据在本机实时读取，不会上传</footer>
+  <footer class="app-foot">橙盘 OrangeDisk v1.2.0 · 数据在本机实时读取，不会上传</footer>
+</div>
+
+<div class="modal" id="cleanModal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cleanModalTitle">
+    <h3 id="cleanModalTitle">确认清理</h3>
+    <div class="modal-body" id="cleanModalBody"></div>
+    <div class="modal-foot">
+      <button class="chip" id="cleanCancel">取消</button>
+      <button class="btn-primary danger" id="cleanConfirm">确认清理</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>

@@ -393,6 +393,306 @@ async function runBigScan(root, limit) {
   big.current = '';
 }
 
+/* ---------- 垃圾清理 ---------- */
+
+// 每类都是固定白名单路径，只删这些目录里的文件；不跟随符号链接，
+// 正在使用 / 刚创建的文件会自动跳过，不会碰用户文档与系统目录本身。
+const JUNK = [
+  {
+    id: 'temp-user', name: '用户临时文件', source: 'system', risk: 'safe', admin: false, enabled: true,
+    desc: '程序运行时产生的临时文件，删除后会自动重建',
+    dirs: ['%LOCALAPPDATA%\\Temp'], minAge: 20,
+  },
+  {
+    id: 'temp-system', name: '系统临时文件', source: 'system', risk: 'safe', admin: true, enabled: true,
+    desc: 'Windows 临时目录；被系统占用的文件会自动跳过',
+    dirs: ['%WINDIR%\\Temp'], minAge: 20,
+  },
+  {
+    id: 'crash-dumps', name: '崩溃转储', source: 'system', risk: 'safe', admin: false, enabled: true,
+    desc: '程序崩溃时生成的转储文件，可安全删除',
+    dirs: ['%LOCALAPPDATA%\\CrashDumps', '%WINDIR%\\Minidump', '%WINDIR%\\LiveKernelReports'],
+  },
+  {
+    id: 'shader-cache', name: '着色器缓存', source: 'shader', risk: 'safe', admin: false, enabled: true,
+    desc: '显卡驱动编译的着色器缓存；删除后游戏首次加载会重新编译，只慢这一次',
+    dirs: [
+      '%LOCALAPPDATA%\\D3DSCache',
+      '%LOCALAPPDATA%\\NVIDIA\\DXCache',
+      '%LOCALAPPDATA%\\NVIDIA\\GLCache',
+      '%LOCALAPPDATA%\\AMD\\DxCache',
+      '%LOCALAPPDATA%\\AMD\\DxcCache',
+      '%LOCALAPPDATA%\\Intel\\ShaderCache',
+    ],
+  },
+  {
+    id: 'app-cache', name: '应用缓存', source: 'app', risk: 'safe', admin: false, enabled: true,
+    desc: '缩略图 / 图标 / 网络缓存，删除后系统会自动重建',
+    dirs: [
+      '%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache',
+      '%LOCALAPPDATA%\\Microsoft\\Windows\\Caches',
+    ],
+    globs: [
+      '%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\thumbcache_*.db',
+      '%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\iconcache_*.db',
+    ],
+  },
+  {
+    id: 'browser-cache', name: '浏览器缓存', source: 'app', risk: 'warn', admin: false, enabled: false,
+    desc: 'Edge / Chrome 的网页缓存，不影响书签、密码和登录状态；浏览器运行时部分文件会跳过',
+    dirs: [
+      '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache',
+      '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Code Cache',
+      '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\GPUCache',
+      '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache',
+      '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Code Cache',
+      '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\GPUCache',
+    ],
+  },
+  {
+    id: 'prefetch', name: 'Windows 预读文件', source: 'system', risk: 'warn', admin: true, enabled: false,
+    desc: '记录常用程序的启动信息；删除后前几次启动会略慢',
+    dirs: ['%WINDIR%\\Prefetch'],
+  },
+  {
+    id: 'recycle-bin', name: '回收站', source: 'recycle', risk: 'danger', admin: false, enabled: false,
+    desc: '清空后无法恢复，请确认里面没有要找回的文件',
+    special: 'recycle',
+  },
+];
+
+const envExpand = (p) => p.replace(/%([^%]+)%/g, (m, k) => process.env[k] || process.env[k.toUpperCase()] || m);
+
+const segRegex = (seg) =>
+  new RegExp('^' + seg.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
+
+function expandSegments(pattern) {
+  const full = envExpand(pattern);
+  const root = path.parse(full).root;
+  const segs = full.slice(root.length).split('\\').filter(Boolean);
+  return { root, segs };
+}
+
+function expandDirs(pattern) {
+  const { root, segs } = expandSegments(pattern);
+  let cur = [root];
+  for (const seg of segs) {
+    const next = [];
+    for (const base of cur) {
+      if (seg.includes('*')) {
+        const re = segRegex(seg);
+        let names = [];
+        try {
+          names = fs.readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+        } catch { /* 目录不存在就跳过 */ }
+        for (const n of names) if (re.test(n)) next.push(joinPath(base, n));
+      } else {
+        next.push(joinPath(base, seg));
+      }
+    }
+    cur = next;
+  }
+  return cur.filter((p) => {
+    try { return fs.statSync(p).isDirectory(); } catch { return false; }
+  });
+}
+
+function expandFiles(pattern) {
+  const { root, segs } = expandSegments(pattern);
+  if (!segs.length) return [];
+  const last = segs.pop();
+  let cur = [root];
+  for (const seg of segs) {
+    const next = [];
+    for (const base of cur) {
+      if (seg.includes('*')) {
+        const re = segRegex(seg);
+        let names = [];
+        try {
+          names = fs.readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+        } catch { /* ignore */ }
+        for (const n of names) if (re.test(n)) next.push(joinPath(base, n));
+      } else {
+        next.push(joinPath(base, seg));
+      }
+    }
+    cur = next;
+  }
+  const re = segRegex(last);
+  const out = [];
+  for (const base of cur) {
+    try {
+      for (const e of fs.readdirSync(base, { withFileTypes: true })) {
+        if (e.isFile() && re.test(e.name)) out.push(joinPath(base, e.name));
+      }
+    } catch { /* ignore */ }
+  }
+  return out;
+}
+
+// 拒绝高风险的“根目录”，防止配置写错时把整盘删掉
+function isDeletableRoot(p) {
+  const segs = p.split('\\').filter(Boolean);
+  if (segs.length < 3) return false;
+  const low = p.toLowerCase().replace(/\\$/, '');
+  if (['c:\\windows', 'c:\\users', 'c:\\program files', 'c:\\program files (x86)'].includes(low)) return false;
+  const localAppData = (process.env.LOCALAPPDATA || '').toLowerCase().replace(/\\$/, '');
+  if (localAppData && low === localAppData) return false;
+  return true;
+}
+
+async function dirBytes(root, deadline) {
+  let size = 0;
+  let files = 0;
+  let truncated = false;
+  const stack = [root];
+  while (stack.length) {
+    if (Date.now() > deadline) { truncated = true; break; }
+    const dir = stack.pop();
+    let ents;
+    try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
+    const batch = [];
+    for (const e of ents) {
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) stack.push(joinPath(dir, e.name));
+      else if (e.isFile()) batch.push(joinPath(dir, e.name));
+    }
+    for (let i = 0; i < batch.length; i += 64) {
+      const chunk = batch.slice(i, i + 64);
+      const sts = await Promise.all(chunk.map((f) => fsp.lstat(f).catch(() => null)));
+      for (const s of sts) if (s) { size += s.size; files++; }
+    }
+    if (files > 300_000) { truncated = true; break; }
+  }
+  return { size, files, truncated };
+}
+
+let recycleCache = { at: 0, data: { size: 0, files: 0 } };
+
+async function recycleInfo() {
+  if (Date.now() - recycleCache.at < 60_000) return recycleCache.data;
+  let data = { size: 0, files: 0 };
+  try {
+    const raw = await runPs(
+      '[Console]::OutputEncoding=[Text.Encoding]::UTF8;' +
+      '$s=0;$c=0;try{$rb=(New-Object -ComObject Shell.Application).Namespace(0xA);' +
+      'foreach($i in $rb.Items()){ $s+=[int64]$i.Size; $c++; if($c -ge 20000){break} }}catch{};' +
+      'Write-Output ("$s|$c")', 15000);
+    const parts = raw.trim().split('|');
+    data = { size: Number(parts[0]) || 0, files: Number(parts[1]) || 0 };
+  } catch { /* 读不到就当作空 */ }
+  recycleCache = { at: Date.now(), data };
+  return data;
+}
+
+async function scanJunk(cat) {
+  if (cat.special === 'recycle') {
+    const r = await recycleInfo();
+    return { size: r.size, files: r.files, truncated: false, roots: [] };
+  }
+  const deadline = Date.now() + 15_000;
+  let size = 0;
+  let files = 0;
+  let truncated = false;
+  const roots = [];
+  for (const pattern of cat.dirs || []) {
+    for (const root of expandDirs(pattern)) {
+      roots.push(root);
+      const r = await dirBytes(root, deadline);
+      size += r.size; files += r.files; truncated = truncated || r.truncated;
+    }
+  }
+  for (const pattern of cat.globs || []) {
+    for (const f of expandFiles(pattern)) {
+      try { const st = await fsp.lstat(f); size += st.size; files++; roots.push(f); } catch { /* ignore */ }
+    }
+  }
+  return { size, files, truncated, roots };
+}
+
+async function deleteTree(root, minAgeMs, deadline) {
+  let freed = 0;
+  let deleted = 0;
+  let skipped = 0;
+  const stack = [root];
+  const dirs = [];
+  while (stack.length) {
+    if (Date.now() > deadline) { skipped++; break; }
+    const dir = stack.pop();
+    dirs.push(dir);
+    let ents;
+    try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of ents) {
+      const p = joinPath(dir, e.name);
+      if (e.isSymbolicLink()) { skipped++; continue; }
+      if (e.isDirectory()) { stack.push(p); continue; }
+      if (!e.isFile()) continue;
+      try {
+        const st = await fsp.lstat(p);
+        if (minAgeMs && Date.now() - st.mtimeMs < minAgeMs) { skipped++; continue; }
+        await fsp.unlink(p);
+        freed += st.size;
+        deleted++;
+      } catch { skipped++; }
+    }
+  }
+  dirs.sort((a, b) => b.length - a.length);
+  for (const d of dirs) {
+    if (d === root) continue;
+    try { await fsp.rmdir(d); } catch { /* 非空或占用，跳过 */ }
+  }
+  return { freed, deleted, skipped };
+}
+
+async function cleanJunk(cat, deadline) {
+  let freed = 0;
+  let deleted = 0;
+  let skipped = 0;
+  const minAgeMs = (cat.minAge || 0) * 60_000;
+
+  for (const pattern of cat.dirs || []) {
+    for (const root of expandDirs(pattern)) {
+      if (!isDeletableRoot(root)) { skipped++; continue; }
+      const r = await deleteTree(root, minAgeMs, deadline);
+      freed += r.freed; deleted += r.deleted; skipped += r.skipped;
+    }
+  }
+  for (const pattern of cat.globs || []) {
+    for (const f of expandFiles(pattern)) {
+      try {
+        const st = await fsp.lstat(f);
+        await fsp.unlink(f);
+        freed += st.size;
+        deleted++;
+      } catch { skipped++; }
+    }
+  }
+  if (cat.special === 'recycle') {
+    const before = await recycleInfo();
+    try { await runPs('Clear-RecycleBin -Force -ErrorAction SilentlyContinue', 30_000); } catch { skipped++; }
+    recycleCache = { at: 0, data: { size: 0, files: 0 } };
+    freed += before.size;
+    deleted += before.files;
+  }
+  return { freed, deleted, skipped };
+}
+
+function junkMeta(cat) {
+  return {
+    id: cat.id,
+    name: cat.name,
+    desc: cat.desc,
+    source: cat.source,
+    risk: cat.risk,
+    admin: cat.admin,
+    enabled: cat.enabled,
+    special: cat.special || '',
+    paths: cat.special === 'recycle'
+      ? []
+      : (cat.dirs || []).flatMap((p) => expandDirs(p)).slice(0, 12),
+  };
+}
+
 /* ---------- HTTP ---------- */
 
 async function serveStatic(res, pathname) {
@@ -443,6 +743,33 @@ async function handle(req, res) {
     }
 
     if (pathname === '/api/apps') return json(res, 200, await getApps());
+
+    if (pathname === '/api/junk') return json(res, 200, JUNK.map(junkMeta));
+
+    if (pathname === '/api/junk/size') {
+      const cat = JUNK.find((c) => c.id === url.searchParams.get('id'));
+      if (!cat) return json(res, 404, { error: '未知分类' });
+      const r = await scanJunk(cat);
+      return json(res, 200, { id: cat.id, ...r });
+    }
+
+    if (pathname === '/api/junk/clean' && req.method === 'POST') {
+      const body = await readJson(req);
+      const ids = Array.isArray(body.ids) ? body.ids.filter((x) => typeof x === 'string') : [];
+      const cats = ids.map((id) => JUNK.find((c) => c.id === id)).filter(Boolean);
+      if (!cats.length) return json(res, 400, { error: '没有要清理的项目' });
+      const deadline = Date.now() + 90_000;
+      const results = [];
+      let freed = 0;
+      let deleted = 0;
+      let skipped = 0;
+      for (const cat of cats) {
+        const r = await cleanJunk(cat, deadline);
+        results.push({ id: cat.id, name: cat.name, ...r });
+        freed += r.freed; deleted += r.deleted; skipped += r.skipped;
+      }
+      return json(res, 200, { freed, deleted, skipped, results });
+    }
 
     if (pathname === '/api/scan/start' && req.method === 'POST') {
       if (big.running) return json(res, 409, { error: '已有扫描正在进行' });

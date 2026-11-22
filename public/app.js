@@ -13,6 +13,7 @@
       files: $('#view-files'),
       big: $('#view-big'),
       apps: $('#view-apps'),
+      clean: $('#view-clean'),
     },
     miniStat: $('#miniStat'),
     refresh: $('#refreshBtn'),
@@ -42,6 +43,18 @@
     bigFill: $('#bigFill'),
     bigList: $('#bigList'),
     bigEmpty: $('#bigEmpty'),
+    cleanList: $('#cleanList'),
+    cleanEmpty: $('#cleanEmpty'),
+    cleanSummary: $('#cleanSummary'),
+    cleanRescan: $('#cleanRescan'),
+    cleanRun: $('#cleanRun'),
+    cleanTotal: $('#cleanTotal'),
+    cleanTotalSize: $('#cleanTotalSize'),
+    cleanTotalHint: $('#cleanTotalHint'),
+    cleanModal: $('#cleanModal'),
+    cleanModalBody: $('#cleanModalBody'),
+    cleanCancel: $('#cleanCancel'),
+    cleanConfirm: $('#cleanConfirm'),
     toast: $('#toast'),
   };
 
@@ -65,6 +78,7 @@
     },
     apps: { data: null, query: '', totalKnown: 0, loading: false },
     big: { root: null, timer: 0, busy: false, data: null, sig: '' },
+    clean: { cats: [], sel: new Set(), sizes: new Map(), token: 0, loaded: false, cleaning: false, confirmMode: '' },
   };
 
   /* ---------------- 工具 ---------------- */
@@ -124,6 +138,13 @@
     folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.2A2.2 2.2 0 0 1 5.2 5h4.1l1.9 2.3h7.6A2.2 2.2 0 0 1 21 9.5v7.3A2.2 2.2 0 0 1 18.8 19H5.2A2.2 2.2 0 0 1 3 16.8z" fill="currentColor"/></svg>',
     file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.2 3h7.1L19 8.7V20a1 1 0 0 1-1 1H6.2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M13 3v6h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
     empty: '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 20a6 6 0 0 1 6-6h11l6 7h19a6 6 0 0 1 6 6v19a6 6 0 0 1-6 6H14a6 6 0 0 1-6-6z" fill="#ffe6d2"/><path d="M8 26h48" stroke="#ffc89c" stroke-width="2" stroke-linecap="round"/><circle cx="24" cy="40" r="3" fill="#ffbf8c"/><circle cx="38" cy="40" r="3" fill="#ffbf8c"/><path d="M27 47c3 2.4 7 2.4 10 0" stroke="#ffbf8c" stroke-width="2" stroke-linecap="round" fill="none"/></svg>',
+    open: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 4 11.5 12.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M18.5 14.5V19a1.5 1.5 0 0 1-1.5 1.5H5.5A1.5 1.5 0 0 1 4 19V6a1.5 1.5 0 0 1 1.5-1.5H10" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    junk: {
+      system: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="7.5" height="6.5" rx="1.6" fill="currentColor"/><rect x="13" y="4.5" width="7.5" height="6.5" rx="1.6" fill="currentColor"/><rect x="3.5" y="13" width="7.5" height="6.5" rx="1.6" fill="currentColor"/><rect x="13" y="13" width="7.5" height="6.5" rx="1.6" fill="currentColor"/></svg>',
+      app: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="6" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.9"/><rect x="13.5" y="4.5" width="6" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.9"/><rect x="4.5" y="13.5" width="6" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.9"/><rect x="13.5" y="13.5" width="6" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>',
+      shader: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M10 3.5v3.5M14 3.5v3.5M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+      recycle: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M9.5 7V4.8h5V7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M7 7l1 12.2h8L17 7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M10.5 10.5v5.5M13.5 10.5v5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+    },
   };
 
   /* ---------------- 视图切换 ---------------- */
@@ -144,6 +165,7 @@
 
     if (name === 'apps' && !state.apps.data && !state.apps.loading) loadApps();
     if (name === 'big') syncBig();
+    if (name === 'clean' && !state.clean.loaded) loadClean();
     if (name === 'files' && !state.files.path) {
       const root = state.disks[0]?.root || 'C:\\';
       openPath(root);
@@ -321,6 +343,7 @@
       el.innerHTML = `
         <span class="ficon ${it.dir ? 'dir' : 'file'}">${it.dir ? ICON.folder : ICON.file}</span>
         <span class="fname">${esc(it.name)}${it.link ? '<em class="tag">链接</em>' : ''}</span>
+        <button class="reveal-btn" data-path="${esc(it.path)}" title="在资源管理器中打开">${ICON.open}</button>
         <span class="fsize${known ? ' done' : ''}">${it.dir ? (known ? sizeText(known) : '<i class="shine"></i>') : fmtBytes(it.size)}</span>
         <span class="fbar"><i></i></span>
         <span class="ftime">${fmtDate(it.mtime)}</span>`;
@@ -562,6 +585,7 @@
       return `<div class="brow" data-path="${esc(f.path)}" style="animation-delay:${Math.min(i, 12) * 18}ms" title="${esc(f.path)}">
         <span class="brank">${i + 1}</span>
         <div class="bmain"><b>${esc(name)}</b><span>${esc(dir)}</span></div>
+        <button class="reveal-btn" data-path="${esc(f.path)}" title="在资源管理器中打开">${ICON.open}</button>
         <span class="bsize">${fmtBytes(f.size)}</span>
         <span class="bbar"><i style="width:${Math.max(3, (f.size / max) * 100)}%"></i></span>
       </div>`;
@@ -642,6 +666,219 @@
     if (!state.big.timer) pollBig();
   }
 
+  /* ---------------- 清理垃圾 ---------------- */
+
+  function reveal(path) {
+    if (!path) return;
+    api('/api/reveal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    }).catch((err) => toast(err.message, true));
+  }
+
+  function renderClean() {
+    const { cats, sizes, sel } = state.clean;
+    const riskText = { safe: '安全', warn: '注意', danger: '危险' };
+
+    if (!cats.length) {
+      els.cleanList.innerHTML = '';
+      els.cleanEmpty.hidden = false;
+      els.cleanEmpty.innerHTML = `${ICON.empty}<div>没有可清理的分类</div>`;
+      return;
+    }
+    els.cleanEmpty.hidden = true;
+
+    els.cleanList.innerHTML = cats.map((cat, i) => {
+      const s = sizes.get(cat.id);
+      const on = sel.has(cat.id);
+      const paths = (cat.paths || []).slice(0, 3)
+        .map((p) => `<span class="cpath" title="${esc(p)}">${esc(p)}</span>`).join('');
+      const sizeCell = s
+        ? `<b>${fmtBytes(s.size)}</b><span>${s.files.toLocaleString()} 个文件${s.truncated ? ' · 已截断' : ''}</span>`
+        : '<b><i class="shine"></i></b><span>扫描中…</span>';
+      const openBtn = (cat.paths && cat.paths.length)
+        ? `<button class="copen" data-path="${esc(cat.paths[0])}" title="在资源管理器中打开">${ICON.open}</button>`
+        : '<span></span>';
+      return `<div class="ccard${on ? ' on' : ''}" data-id="${cat.id}" style="animation-delay:${Math.min(i, 8) * 26}ms">
+        <label class="cbox" title="选择这一类">
+          <input type="checkbox" data-id="${cat.id}"${on ? ' checked' : ''}>
+          <i></i>
+        </label>
+        <span class="cico src-${cat.source}">${ICON.junk[cat.source] || ''}</span>
+        <div class="cmain">
+          <div class="ctitle"><b>${esc(cat.name)}</b><em class="risk ${cat.risk}">${riskText[cat.risk] || ''}</em>${cat.admin ? '<em class="badge-admin">需要管理员</em>' : ''}</div>
+          <div class="cdesc">${esc(cat.desc)}</div>
+          ${paths ? `<div class="cpaths">${paths}</div>` : ''}
+        </div>
+        <div class="csize${s ? '' : ' pending'}">${sizeCell}</div>
+        ${openBtn}
+      </div>`;
+    }).join('');
+  }
+
+  function updateCleanCard(id) {
+    const card = els.cleanList.querySelector(`.ccard[data-id="${id}"]`);
+    const s = state.clean.sizes.get(id);
+    if (!card || !s) return;
+    const cell = card.querySelector('.csize');
+    cell.classList.remove('pending');
+    cell.innerHTML = `<b>${fmtBytes(s.size)}</b><span>${s.files.toLocaleString()} 个文件${s.truncated ? ' · 已截断' : ''}</span>`;
+    updateCleanTotal();
+  }
+
+  function setCleanSel(id, on) {
+    if (on) state.clean.sel.add(id);
+    else state.clean.sel.delete(id);
+    const card = els.cleanList.querySelector(`.ccard[data-id="${id}"]`);
+    if (card) {
+      card.classList.toggle('on', on);
+      const input = card.querySelector('input[data-id]');
+      if (input) input.checked = on;
+    }
+    updateCleanTotal();
+  }
+
+  function cleanSelectedTotal() {
+    let total = 0;
+    for (const id of state.clean.sel) total += state.clean.sizes.get(id)?.size || 0;
+    return total;
+  }
+
+  function updateCleanTotal() {
+    const total = cleanSelectedTotal();
+    const n = state.clean.sel.size;
+    els.cleanTotal.hidden = state.clean.cats.length === 0;
+    els.cleanTotalSize.textContent = fmtBytes(total);
+    els.cleanTotalHint.textContent = state.clean.cleaning
+      ? '正在清理…'
+      : n ? `已选 ${n} 类 · 删除后无法恢复` : '勾选下方分类后点「清理所选」';
+    els.cleanRun.disabled = state.clean.cleaning || !n || total <= 0;
+    els.cleanRun.textContent = state.clean.cleaning ? '清理中…' : '清理所选';
+  }
+
+  async function loadClean() {
+    state.clean.loaded = true;
+    const token = ++state.clean.token;
+    state.clean.sizes = new Map();
+    state.clean.confirmMode = '';
+    els.cleanList.innerHTML = '';
+    els.cleanEmpty.hidden = true;
+    els.cleanSummary.textContent = '正在读取清理分类…';
+    els.cleanRun.disabled = true;
+    try {
+      const cats = await api('/api/junk');
+      if (token !== state.clean.token) return;
+      state.clean.cats = cats;
+      state.clean.sel = new Set(cats.filter((c) => c.enabled).map((c) => c.id));
+      renderClean();
+      updateCleanTotal();
+      scanCleanSizes(token);
+    } catch (e) {
+      toast(e.message, true);
+      els.cleanSummary.textContent = '读取清理分类失败';
+    }
+  }
+
+  async function scanCleanSizes(token) {
+    const cats = state.clean.cats.slice();
+    const total = cats.length;
+    let idx = 0;
+    let done = 0;
+    const worker = async () => {
+      while (idx < total) {
+        const cat = cats[idx++];
+        if (token !== state.clean.token) return;
+        try {
+          const r = await api(`/api/junk/size?id=${encodeURIComponent(cat.id)}`);
+          if (token !== state.clean.token) return;
+          state.clean.sizes.set(cat.id, r);
+          updateCleanCard(cat.id);
+        } catch { /* 单个分类失败不影响其它 */ }
+        done++;
+        els.cleanSummary.textContent = `正在扫描缓存… ${done} / ${total}`;
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    if (token !== state.clean.token) return;
+    const sum = cats.reduce((a, c) => a + (state.clean.sizes.get(c.id)?.size || 0), 0);
+    els.cleanSummary.textContent = `共 ${total} 类可清理项目 · 合计约 ${fmtBytes(sum)}`;
+    updateCleanTotal();
+  }
+
+  function openCleanModal() {
+    const ids = [...state.clean.sel];
+    const cats = state.clean.cats.filter((c) => ids.includes(c.id));
+    if (!cats.length) return;
+    const total = cleanSelectedTotal();
+    els.cleanModalBody.innerHTML = `
+      <div>将删除以下分类里的<strong>缓存文件</strong>，不会碰你的文档、桌面、下载。</div>
+      ${cats.map((c) => {
+        const s = state.clean.sizes.get(c.id);
+        return `<div class="mrow"><span>${esc(c.name)}<span class="mtag">${(s?.files || 0).toLocaleString()} 个文件</span></span><b>${fmtBytes(s?.size || 0)}</b></div>`;
+      }).join('')}
+      <div class="mtotal"><span>合计可释放</span><b>${fmtBytes(total)}</b></div>
+      <div class="mnote">正在使用或刚创建的临时文件会自动跳过；回收站清空后无法恢复。</div>`;
+    els.cleanConfirm.textContent = '确认清理';
+    els.cleanConfirm.disabled = false;
+    els.cleanCancel.disabled = false;
+    els.cleanCancel.hidden = false;
+    els.cleanModal.hidden = false;
+    state.clean.confirmMode = 'confirm';
+  }
+
+  function closeCleanModal() {
+    els.cleanModal.hidden = true;
+    els.cleanCancel.hidden = false;
+    els.cleanCancel.disabled = false;
+    els.cleanConfirm.disabled = false;
+    state.clean.confirmMode = '';
+  }
+
+  async function doClean() {
+    if (state.clean.confirmMode === 'done') {
+      closeCleanModal();
+      loadClean();
+      return;
+    }
+    const ids = [...state.clean.sel];
+    if (!ids.length) return;
+
+    state.clean.cleaning = true;
+    updateCleanTotal();
+    els.cleanConfirm.disabled = true;
+    els.cleanCancel.disabled = true;
+    els.cleanConfirm.textContent = '清理中…';
+    els.cleanModalBody.innerHTML = '<div style="padding:14px 0"><span class="spinner"></span> 正在删除所选缓存，请稍候…</div>';
+
+    try {
+      const r = await api('/api/junk/clean', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      state.clean.confirmMode = 'done';
+      els.cleanModalBody.innerHTML = `
+        <div style="padding:4px 0 6px"><b>已释放 ${fmtBytes(r.freed)}</b></div>
+        <div class="mrow"><span>删除文件</span><b>${r.deleted.toLocaleString()}</b></div>
+        <div class="mrow"><span>跳过（正在使用 / 最近创建）</span><b>${r.skipped.toLocaleString()}</b></div>
+        <div class="mnote">磁盘空间已经归还，可在「磁盘」页刷新查看可用容量。</div>`;
+      els.cleanConfirm.disabled = false;
+      els.cleanConfirm.textContent = '完成';
+      els.cleanCancel.hidden = true;
+      toast(`已释放 ${fmtBytes(r.freed)}`);
+    } catch (e) {
+      toast(e.message, true);
+      els.cleanModalBody.innerHTML = `<div>清理失败：${esc(e.message)}</div>`;
+      els.cleanConfirm.disabled = false;
+      els.cleanConfirm.textContent = '重试';
+      els.cleanCancel.disabled = false;
+    } finally {
+      state.clean.cleaning = false;
+      updateCleanTotal();
+    }
+  }
+
   /* ---------------- 事件绑定 ---------------- */
 
   function bind() {
@@ -699,6 +936,8 @@
     });
 
     els.fileList.addEventListener('click', (e) => {
+      const open = e.target.closest('.reveal-btn');
+      if (open) { reveal(open.dataset.path); return; }
       const row = e.target.closest('.frow');
       if (!row) return;
       const item = state.files.items.find((i) => i.path === row.dataset.path);
@@ -714,13 +953,7 @@
       const row = e.target.closest('.frow');
       if (!row) return;
       const item = state.files.items.find((i) => i.path === row.dataset.path);
-      if (item && !item.dir && !item.link) {
-        api('/api/reveal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: item.path }),
-        }).catch((err) => toast(err.message, true));
-      }
+      if (item && !item.dir && !item.link) reveal(item.path);
     });
 
     els.appSearch.addEventListener('input', () => {
@@ -731,12 +964,7 @@
     els.appList.addEventListener('click', (e) => {
       const row = e.target.closest('.arow');
       const target = row?.dataset.open;
-      if (!target) return;
-      api('/api/reveal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: target }),
-      }).catch((err) => toast(err.message, true));
+      if (target) reveal(target);
     });
 
     document.addEventListener('keydown', (e) => {
@@ -758,13 +986,36 @@
     });
 
     els.bigList.addEventListener('click', (e) => {
+      const open = e.target.closest('.reveal-btn');
+      if (open) { reveal(open.dataset.path); return; }
       const row = e.target.closest('.brow');
       if (!row) return;
-      api('/api/reveal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: row.dataset.path }),
-      }).catch((err) => toast(err.message, true));
+      reveal(row.dataset.path);
+    });
+
+    /* -------- 清理 -------- */
+
+    els.cleanList.addEventListener('change', (e) => {
+      const input = e.target.closest('input[data-id]');
+      if (input) setCleanSel(input.dataset.id, input.checked);
+    });
+
+    els.cleanList.addEventListener('click', (e) => {
+      const open = e.target.closest('.copen');
+      if (open) { reveal(open.dataset.path); return; }
+      if (e.target.closest('.cbox')) return;
+      const card = e.target.closest('.ccard');
+      if (card) setCleanSel(card.dataset.id, !state.clean.sel.has(card.dataset.id));
+    });
+
+    els.cleanRun.addEventListener('click', openCleanModal);
+    els.cleanRescan.addEventListener('click', () => loadClean());
+    els.cleanCancel.addEventListener('click', closeCleanModal);
+    els.cleanConfirm.addEventListener('click', doClean);
+    els.cleanModal.addEventListener('click', (e) => { if (e.target === els.cleanModal) closeCleanModal(); });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !els.cleanModal.hidden) closeCleanModal();
     });
   }
 

@@ -16,10 +16,18 @@ using Microsoft.Win32;
 static class Program
 {
     const string AppName = "橙盘";
-    const string Version = "1.1.0";
+    const string Version = "1.2.0";
     const string Publisher = "OrangeDisk";
     const string ExeName = "OrangeDisk.exe";
     const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\OrangeDisk";
+
+#if UPDATER
+    const string WindowTitle = "更新 橙盘";
+    const string ActionLabel = "更新";
+#else
+    const string WindowTitle = "安装 橙盘";
+    const string ActionLabel = "安装";
+#endif
 
     static string BaseDir
     {
@@ -257,7 +265,7 @@ static class Program
             catch (Exception ex)
             {
                 Log("install failed: " + ex);
-                MessageBox.Show(ex.Message, "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(ex.Message, ActionLabel + "失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Environment.Exit(1);
             }
             Launch();
@@ -300,6 +308,12 @@ static class Program
     static void DoInstall(Action<int, string> report)
     {
         Log("DoInstall start -> " + BaseDir);
+#if UPDATER
+        if (!File.Exists(Path.Combine(BaseDir, ExeName)))
+        {
+            throw new Exception("还没有安装橙盘，请先运行完整安装包（OrangeDisk-Setup）。");
+        }
+#endif
         if (report != null) report(2, "正在结束已运行的橙盘…");
         KillRunning();
         Log("killed running");
@@ -346,7 +360,7 @@ static class Program
         if (report != null) report(97, "正在注册卸载信息…");
         RegisterUninstall();
 
-        if (report != null) report(100, "安装完成");
+        if (report != null) report(100, ActionLabel + "完成");
     }
 
     static void RegisterUninstall()
@@ -387,7 +401,7 @@ static class Program
 
         public InstallForm()
         {
-            Text = "安装 橙盘";
+            Text = WindowTitle;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -406,7 +420,7 @@ static class Program
             title.BackColor = Color.Transparent;
 
             _sub = new Label();
-            _sub.Text = "正在准备安装…";
+            _sub.Text = "正在准备" + ActionLabel + "…";
             _sub.Left = 28; _sub.Top = 58; _sub.Width = 404; _sub.Height = 20;
             _sub.ForeColor = Color.FromArgb(125, 107, 91);
             _sub.BackColor = Color.Transparent;
@@ -447,11 +461,11 @@ static class Program
             Failed = error != null;
             if (Failed)
             {
-                MessageBox.Show(this, error, "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, error, ActionLabel + "失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             else
             {
-                SetStatus(100, "安装完成，正在启动…");
+                SetStatus(100, ActionLabel + "完成，正在启动…");
             }
             Close();
         }
